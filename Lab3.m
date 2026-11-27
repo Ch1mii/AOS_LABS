@@ -13,18 +13,21 @@ diary(fullfile(cfg.outDir, 'Lab3_results.txt'));
 diary on;
 tAll = tic;
 
-fprintf('=============================================================\n');
 fprintf(' ЛАБОРАТОРНАЯ РАБОТА №3: синхронизация OFDM в канале с АБГШ\n');
-fprintf('=============================================================\n');
-fprintf(' Nfft = %d, Ncp = %d (%.0f%% от Nfft), кадр: преамбула + %d символов\n', ...
-    cfg.Nfft, cfg.Ncp, 100*cfg.Ncp/cfg.Nfft, cfg.nDataSym);
-fprintf(' Данные: КАМ-16 на %d поднесущих, пилоты: КАМ-4 на %d поднесущих\n', ...
-    numel(cfg.dataIdx), numel(cfg.pilotIdx));
-fprintf(' Оценка BER по символам %d...%d, бит в кадре: %d\n', ...
-    cfg.evalSym(1), cfg.evalSym(end), cfg.qamBits*numel(cfg.dataIdx)*numel(cfg.evalSym));
-fprintf(' Eb/N0 = %s дБ, кадров на точку <= %d\n\n', mat2str(cfg.snrDb), cfg.nFrames);
+fprintf(' Nfft = %d, Ncp = %d (%.0f%% от Nfft), защитные полосы: %d нулей с каждого края\n', ...
+    cfg.Nfft, cfg.Ncp, 100*cfg.Ncp/cfg.Nfft, cfg.Nguard);
+fprintf(' Активных поднесущих: %d (данные: КАМ-16 на %d, пилоты: КАМ-4 на %d, DC: 1)\n', ...
+    cfg.Nused, numel(cfg.dataIdx), numel(cfg.pilotIdx));
+fprintf(' Кадр: преамбула Минна + %d OFDM-символов (оценка BER по символам %d...%d)\n', ...
+    cfg.nDataSym, cfg.evalSym(1), cfg.evalSym(end));
+fprintf(' Информационных бит на кадр: %d\n', ...
+    cfg.qamBits * numel(cfg.dataIdx) * numel(cfg.evalSym));
+fprintf(' Eb/N0 = %s дБ, фиксированное число кадров на точку: %d\n\n', ...
+    mat2str(cfg.snrDb), cfg.nFrames);
 
 S = struct('tag', {}, 'snr', {}, 'ber', {}, 'err', {}, 'bits', {});
+
+cols = [0 0.45 0.74; 0.85 0.33 0.10; 0.49 0.18 0.56; 0.47 0.67 0.19];
 
 %%  ЧАСТЬ 0. Демонстрация временного и частотного сдвига
 
@@ -39,13 +42,13 @@ rxRef = lab_channel(cfg, txFrame, 0,          0, cfg.snrDemo);
 rxDel = lab_channel(cfg, txFrame, deltaDemo,  0, cfg.snrDemo);
 
 % (б,в) фазовая ошибка от временного сдвига внутри ЦП: до и после эквалайзера
-%       созвездие показываем при высоком ОСШ, иначе точки "тонут" в шуме
+%       созвездие показываем при высоком ОСШ, чтобы фазовый поворот был нагляден
 deltaCP  = -cfg.Ncp/8;
 snrConst = 22;                                  % Eb/N0 для демонстрации созвездий
 rxCP = lab_channel(cfg, txFrame, deltaCP, 0, snrConst);
 win0 = cfg.padLen + 1 + cfg.Ncp + (cfg.evalSym(1))*cfg.Nsym;
 Seg  = rxCP(win0 + (0:cfg.Nfft-1).');
-Ycp  = fft(Seg)/sqrt(cfg.Nfft);
+Ycp  = fftshift(fft(Seg));
 Hcp  = lab_channel_estimate(cfg, Ycp);
 YcpEq = Ycp ./ Hcp;
 
@@ -53,8 +56,8 @@ h = new_figure(cfg, 'Сдвиги сигнала', 'Временной и час
 tiledlayout(h, 1, 3, 'Padding', 'compact', 'TileSpacing', 'compact');
 
 % (а) временной сдвиг виден как смещение максимума корреляции по ЦП
-[~, mRef, axMet] = cp_metric(rxRef, cfg, 1, cfg.padLen + 1);
-[~, mDel]        = cp_metric(rxDel, cfg, 1, cfg.padLen + 1);
+[~, mRef, axMet] = cp_metric(rxRef, cfg, 1, cfg.padLen + 1, 'rho');
+[~, mDel]        = cp_metric(rxDel, cfg, 1, cfg.padLen + 1, 'rho');
 nexttile;
 plot(axMet, mRef, 'Color', [0 0.45 0.74], 'LineWidth', 1.2, 'DisplayName', '\delta = 0');
 hold on; grid on;
@@ -94,7 +97,7 @@ fprintf('         даёт только фазовый наклон по под�
 fprintf('--- Часть 1. Временная синхронизация -------------------------\n');
 
 % 1.1 Помехоустойчивость при временной расстройке (с эквалайзером и без)
-%     delta = 0 | -Ncp/2 (внутри ЦП) | -(Ncp+64) (за пределами ЦП) | +96
+%     delta = 0 | -Ncp/8 (внутри ЦП) | -(Ncp+64) (за пределами ЦП) | +96
 deltaList = [0, -cfg.Ncp/8, -(cfg.Ncp + 64), 96];
 deltaName = {'\delta = 0', sprintf('\\delta = -%d (|\\delta| < N_{CP})', cfg.Ncp/8), ...
              sprintf('\\delta = -%d (|\\delta| > N_{CP})', cfg.Ncp + 64), '\delta = +96'};
@@ -113,7 +116,6 @@ end
 
 h = new_figure(cfg, 'BER при временной расстройке', 'Помехоустойчивость при временной расстройке');
 ax = axes(h); hold(ax, 'on'); grid(ax, 'on');
-cols = [0 0.45 0.74; 0.85 0.33 0.10; 0.49 0.18 0.56; 0.47 0.67 0.19];
 for iD = 1:numel(deltaList)
     for iEq = 1:2
         c = get_curve(S, tags11{(iD-1)*2 + iEq});
@@ -136,7 +138,7 @@ for iEq = 1:2
     for iD = 1:numel(deltaSweep)
         scen = scen_set(make_scen(), 'delta', deltaSweep(iD), ...
                         'useEq', (iEq == 1), 'timeSync', 'none');
-        berSweep(iD, iEq) = ber_point(cfg, scen, cfg.snrDelta, cfg.nFramesDelta, 600);
+        berSweep(iD, iEq) = ber_point(cfg, scen, cfg.snrDelta, cfg.nFramesDelta);
     end
 end
 fprintf('  Развёртка по \\delta при Eb/N0 = %g дБ завершена\n', cfg.snrDelta);
@@ -161,97 +163,78 @@ legend(ax, 'Location', 'northwest');
 style_axes(ax);
 save_figure(cfg, h, 'fig_1_1b_delta_sweep');
 
-% 1.2 Влияние числа символов когерентного накопления M на метрику
-%     Пик метрики от M не зависит, а шумовой пьедестал падает как 1/M,
-%     поэтому ось ординат - логарифмическая, иначе разница не видна.
+% 1.2 Влияние числа символов когерентного накопления M на метрику (без нормировки на max)
 Mlist = [1 2 4 8];
-h = new_figure(cfg, 'Метрика ЦП', 'Метрика временной синхронизации по ЦП');
+h = new_figure(cfg, 'Метрика ЦП', 'Автокорреляционная функция по ЦП');
 ax = axes(h); hold(ax, 'on'); grid(ax, 'on');
 mStyles = {'-', '--', '-.', ':'};
-hleg = [];
+hleg = gobjects(numel(Mlist), 1);
+maxPeak12 = 0;
 for iM = 1:numel(Mlist)
-    [mAvg, axD] = metric_shape(cfg, make_scen(), Mlist(iM), cfg.snrDemo, cfg.nAvgMetric);
-    mAvg(mAvg <= 0) = NaN;
+    [mAvg, axD] = metric_shape(cfg, make_scen(), Mlist(iM), cfg.snrMetric12, cfg.nAvgMetric12);
+    maxPeak12 = max(maxPeak12, max(mAvg));
     pl = plot(ax, axD, mAvg, 'LineStyle', mStyles{iM}, 'Color', cols(iM,:), 'LineWidth', 1.5, ...
               'DisplayName', sprintf('M = %d', Mlist(iM)));
-    hleg = [hleg pl];
-    far = abs(axD) > 500;                       % уровень вне главного лепестка
-    fprintf(['  M = %d: пик метрики %.3f, средний шумовой пьедестал вне пика ' ...
-             '%.5f (отношение %.1f)\n'], Mlist(iM), max(mAvg), ...
-            mean(mAvg(far), 'omitnan'), max(mAvg)/mean(mAvg(far), 'omitnan'));
+    hleg(iM) = pl;
+    far = abs(axD) > 1.1*cfg.Ncp;
+    fprintf(['  M = %d: пик |АКФ| = %.5f, средний шумовой уровень вне пика ' ...
+             '%.6f\n'], Mlist(iM), max(mAvg), mean(mAvg(far), 'omitnan'));
 end
-set(ax, 'YScale', 'log');
-ylim(ax, [1e-5 0.3]);
-xlabel('отсчёты относительно истинного начала кадра');
-ylabel('M(d), отн. ед.');
-title(sprintf('Метрика по ЦП при Eb/N0 = %d дБ (усреднение по %d кадрам)', ...
-      cfg.snrDemo, cfg.nAvgMetric));
-legend(hleg, 'Location', 'southeast'); style_axes();
+set(ax, 'YScale', 'linear');
+xlim(ax, [-1.3*cfg.Ncp, 1.3*cfg.Ncp]);
+ylim(ax, [0, maxPeak12 * 1.15]);
+xlabel(ax, 'отсчёты задержки относительно истинного начала символа');
+ylabel(ax, '|АКФ|');
+title(ax, sprintf('АКФ по ЦП без нормировки на максимум (E_b/N_0 = %d дБ, %d реализаций)', ...
+    cfg.snrMetric12, cfg.nAvgMetric12));
+legend(hleg, 'Location', 'northeast'); style_axes(ax);
 save_figure(cfg, h, 'fig_1_2_metric_M');
 
-% 1.3 Влияние M на помехоустойчивость (синхронизация по ЦП, эквалайзер)
-%     (а) штатный ЦП (Ncp = 256): корреляционный выигрыш велик, метрика
-%         надёжна, поэтому BER от M практически не зависит;
-%     (б) короткий ЦП (Ncp = 32): выигрыш корреляции всего 15 дБ, при низком
-%         ОСШ метрика ошибается, и накопление заметно улучшает приём.
-tags13 = cell(1, numel(Mlist));
-for iM = 1:numel(Mlist)
-    scen = scen_set(make_scen(), 'deltaMode', 'uniform', 'timeSync', 'cp', ...
-                    'M', Mlist(iM), 'useEq', true);
-    tag = sprintf('f13_M%d', Mlist(iM));
-    out = ber_sweep(cfg, scen, cfg.snrDb, sprintf('ЦП, M = %d', Mlist(iM)));
-    S = add_curve(S, tag, out); tags13{iM} = tag;
+% 1.3 Влияние M на помехоустойчивость (слепая синхронизация по ЦП без подглядывания delta)
+%     (а) БЕЗ эквалайзера (штриховые линии): ошибка синхронизации по ЦП вызывает
+%         фазовый наклон exp(-j*2*pi*k*delta/Nfft), разрушающий КАМ-16.
+%         Увеличение M снижает вероятность промаха синхронизации и смещает кривую BER вниз.
+%     (б) С эквалайзером (сплошные линии): линейный фазовый набег внутри/около ЦП компенсируется по пилотам.
+tags13_noEq = cell(1, numel(Mlist));
+tags13_eq   = cell(1, numel(Mlist));
+cfg13No = cfg; cfg13Eq = cfg;
+if ~strcmpi(getenv('LAB3_QUICK'), '1')
+    cfg13No.nFrames   = 300;
+    cfg13No.minErrors = 120000;
+    cfg13No.maxFrames = 3200;
+    cfg13Eq.nFrames   = 100;
 end
-outIdeal1 = ber_sweep(cfg, scen_set(make_scen(), 'deltaMode', 'uniform', ...
-                      'timeSync', 'genie'), cfg.snrDb, 'точное положение кадра');
-S = add_curve(S, 'f13_ideal', outIdeal1);
 
-cfgShort = cfg;
-cfgShort.Ncp = 32;  cfgShort.Nsym = cfgShort.Nfft + cfgShort.Ncp;
-tags13b = cell(1, numel(Mlist));
 for iM = 1:numel(Mlist)
-    scen = scen_set(make_scen(), 'deltaMode', 'uniform', 'timeSync', 'cp', ...
-                    'M', Mlist(iM), 'useEq', true);
-    tag = sprintf('f13b_M%d', Mlist(iM));
-    out = ber_sweep(cfgShort, scen, cfg.snrLow, sprintf('N_{CP}=32, M = %d', Mlist(iM)));
-    S = add_curve(S, tag, out); tags13b{iM} = tag;
+    % Без эквалайзера
+    scenNo = scen_set(make_scen(), 'deltaMode', 'uniform', 'timeSync', 'cp', ...
+                      'M', Mlist(iM), 'useEq', false);
+    tagNo = sprintf('f13_noEq_M%d', Mlist(iM));
+    outNo = ber_sweep(cfg13No, scenNo, cfg.snrDb, sprintf('без экв., M = %d', Mlist(iM)));
+    S = add_curve(S, tagNo, outNo); tags13_noEq{iM} = tagNo;
+
+    % С эквалайзером
+    scenEq = scen_set(make_scen(), 'deltaMode', 'uniform', 'timeSync', 'cp', ...
+                      'M', Mlist(iM), 'useEq', true);
+    tagEq = sprintf('f13_eq_M%d', Mlist(iM));
+    outEq = ber_sweep(cfg13Eq, scenEq, cfg.snrDb, sprintf('с экв., M = %d', Mlist(iM)));
+    S = add_curve(S, tagEq, outEq); tags13_eq{iM} = tagEq;
 end
-outIdeal2 = ber_sweep(cfgShort, scen_set(make_scen(), 'deltaMode', 'uniform', ...
-                      'timeSync', 'genie'), cfg.snrLow, 'точное положение кадра');
-S = add_curve(S, 'f13b_ideal', outIdeal2);
 
-h = new_figure(cfg, 'BER против M', 'Влияние когерентного накопления на помехоустойчивость');
-tiledlayout(h, 1, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
-
-nexttile;
-hold on; grid on;
+h = new_figure(cfg, 'BER против M', 'Влияние когерентного накопления M и эквалайзера');
+ax = axes(h); hold(ax, 'on'); grid(ax, 'on');
+mkList = 'os^d';
 for iM = 1:numel(Mlist)
-    st = struct('col', cols(iM,:), 'mk', 'os^d', 'ls', '-', 'open', false);
-    st.mk = st.mk(iM);
-    plot_ber_curve(gca, get_curve(S, tags13{iM}), st, sprintf('M = %d', Mlist(iM)));
+    st = struct('col', cols(iM,:), 'mk', mkList(iM), 'ls', '-', 'open', false);
+    plot_ber_curve(ax, get_curve(S, tags13_eq{iM}), st, sprintf('M = %d (с экв.)', Mlist(iM)));
 end
-plot_ber_curve(gca, get_curve(S, 'f13_ideal'), ...
-    struct('col', [0 0 0], 'mk', 'none', 'ls', ':', 'open', true), 'точное положение кадра');
-plot_theory(gca, cfg);
-finish_ber_axes(gca, cfg, sprintf('(а) N_{CP} = %d: кривые совпадают', cfg.Ncp));
-
-nexttile;
-hold on; grid on;
+plot_theory(ax, cfg);
 for iM = 1:numel(Mlist)
-    st = struct('col', cols(iM,:), 'mk', 'os^d', 'ls', '-', 'open', false);
-    st.mk = st.mk(iM);
-    plot_ber_curve(gca, get_curve(S, tags13b{iM}), st, sprintf('M = %d', Mlist(iM)));
+    st = struct('col', cols(iM,:), 'mk', mkList(iM), 'ls', '--', 'open', true);
+    plot_ber_curve(ax, get_curve(S, tags13_noEq{iM}), st, sprintf('M = %d (без экв.)', Mlist(iM)));
 end
-plot_ber_curve(gca, get_curve(S, 'f13b_ideal'), ...
-    struct('col', [0 0 0], 'mk', 'none', 'ls', ':', 'open', true), 'точное положение кадра');
-set(gca, 'YScale', 'log', 'XScale', 'linear');
-xlim(gca, [cfgShort.snrLow(1)-0.5, cfgShort.snrLow(end)+0.5]);
-ylim(gca, [0.1 0.6]); yticks(gca, [0.1 0.15 0.2 0.3 0.4 0.5]);
-xticks(gca, cfgShort.snrLow(1):2:cfgShort.snrLow(end));
-xlabel(gca, 'E_b/N_0, дБ'); ylabel(gca, 'BER');
-title(gca, '(б) N_{CP} = 32: накопление помогает');
-legend(gca, 'Location', 'southwest');
-style_axes(gca);
+finish_ber_axes(ax, cfg, 'Влияние M и эквалайзера при синхронизации по ЦП');
+legend(ax, 'Location', 'southwest', 'NumColumns', 2, 'FontSize', 8.5);
 save_figure(cfg, h, 'fig_1_3_ber_M');
 
 % 1.4 Автокорреляционная функция преамбулы Минна и её метрика
@@ -305,14 +288,14 @@ save_figure(cfg, h, 'fig_1_5_minn_ber');
 fprintf('\n--- Часть 2. Частотная синхронизация -------------------------\n');
 
 % 2.1 Дробная расстройка без частотной синхронизации
-epsList = [0.1 0.3 0.5];
+epsList = [0.01 0.1 0.3 0.5];
 tags21 = cell(1, 2*numel(epsList));
 for iE = 1:numel(epsList)
     for iEq = 1:2
         scen = scen_set(make_scen(), 'eps', epsList(iE), 'deltaMode', 'uniform', ...
-                        'timeSync', 'genie', 'useEq', (iEq == 1));
+                        'timeSync', 'genie', 'useEq', (iEq == 1), 'eqMode', 'cfo21');
         tag = sprintf('f21_e%d_eq%d', iE, iEq == 1);
-        out = ber_sweep(cfg, scen, cfg.snrDb, sprintf('\\epsilon = %.1f, %s', ...
+        out = ber_sweep(cfg, scen, cfg.snrDb, sprintf('\\epsilon = %.2g, %s', ...
               epsList(iE), ternary(iEq == 1, 'с экв.', 'без экв.')));
         S = add_curve(S, tag, out); tags21{(iE-1)*2 + iEq} = tag;
     end
@@ -320,14 +303,14 @@ end
 
 h = new_figure(cfg, 'BER при расстройке по частоте', 'Влияние дробной частотной расстройки');
 ax = axes(h); hold(ax, 'on'); grid(ax, 'on');
-colsE = [0.30 0.75 0.93; 0.93 0.69 0.13; 0.64 0.08 0.18];
+colsE = [0 0.45 0.74; 0.30 0.75 0.93; 0.93 0.69 0.13; 0.64 0.08 0.18];
 for iE = 1:numel(epsList)
     for iEq = 1:2
-        st = struct('col', colsE(iE,:), 'mk', 'os^', 'ls', ternary(iEq == 1, '-', '--'), ...
+        st = struct('col', colsE(iE,:), 'mk', 'os^d', 'ls', ternary(iEq == 1, '-', '--'), ...
                     'open', iEq == 2);
         st.mk = st.mk(iE);
         plot_ber_curve(ax, get_curve(S, tags21{(iE-1)*2 + iEq}), st, ...
-            sprintf('\\epsilon = %.1f, %s', epsList(iE), ...
+            sprintf('\\epsilon = %.2g, %s', epsList(iE), ...
             ternary(iEq == 1, 'с эквалайзером', 'без эквалайзера')));
     end
 end
@@ -335,70 +318,60 @@ plot_theory(ax, cfg);
 finish_ber_axes(ax, cfg, 'Без частотной синхронизации');
 save_figure(cfg, h, 'fig_2_1_cfo');
 
-% 2.2 Влияние M на частотную синхронизацию по ЦП
+% 2.2 Влияние M на частотную синхронизацию по ЦП (работа вблизи границы +-0.5)
+cfg22 = cfg;
+if ~strcmpi(getenv('LAB3_QUICK'), '1')
+    cfg22.nFrames   = cfg.nFramesFine;
+    cfg22.minErrors = 120000;
+    cfg22.maxFrames = 2500;
+end
+eps22 = 0.496;
 tags22 = cell(1, numel(Mlist));
 for iM = 1:numel(Mlist)
-    scen = scen_set(make_scen(), 'epsMode', 'uniform', 'epsRange', [-0.5 0.5], ...
-                    'deltaMode', 'uniform', 'timeSync', 'cp', 'freqSync', 'cp', ...
+    scen = scen_set(make_scen(), 'epsMode', 'fixed', 'eps', eps22, ...
+                    'deltaMode', 'uniform', 'timeSync', 'genie', 'freqSync', 'cp', ...
                     'M', Mlist(iM), 'useEq', true);
     tag = sprintf('f22_M%d', Mlist(iM));
-    out = ber_sweep(cfg, scen, cfg.snrDb, sprintf('ЦП-ЧС, M = %d', Mlist(iM)));
+    out = ber_sweep(cfg22, scen, cfg.snrDb, sprintf('ЦП-ЧС, M = %d', Mlist(iM)));
     S = add_curve(S, tag, out); tags22{iM} = tag;
 end
 
 h = new_figure(cfg, 'BER частотной синхронизации по ЦП', 'Частотная синхронизация по ЦП');
-tiledlayout(h, 1, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
-
-nexttile;
-hold on; grid on;
+ax = axes(h); hold(ax, 'on'); grid(ax, 'on');
+mkList = 'os^d';
 for iM = 1:numel(Mlist)
-    st = struct('col', cols(iM,:), 'mk', 'os^d', 'ls', '-', 'open', false);
-    st.mk = st.mk(iM);
-    plot_ber_curve(gca, get_curve(S, tags22{iM}), st, sprintf('M = %d', Mlist(iM)));
+    st = struct('col', cols(iM,:), 'mk', mkList(iM), 'ls', '-', 'open', false);
+    plot_ber_curve(ax, get_curve(S, tags22{iM}), st, sprintf('M = %d', Mlist(iM)));
 end
-cfgRef = cfg;  cfgRef.nFrames = 40; cfgRef.minFrames = 30; cfgRef.maxErrors = Inf;
-outNo22 = ber_sweep(cfgRef, scen_set(make_scen(), 'epsMode', 'uniform', ...
-    'epsRange', [-0.5 0.5], 'deltaMode', 'uniform', 'timeSync', 'genie', ...
+cfgRef = cfg;  cfgRef.nFrames = min(cfg.nFrames, 20);
+outNo22 = ber_sweep(cfgRef, scen_set(make_scen(), 'epsMode', 'fixed', ...
+    'eps', eps22, 'deltaMode', 'uniform', 'timeSync', 'genie', ...
     'freqSync', 'none', 'useEq', true), cfg.snrDb, 'без синхр. частоты');
 S = add_curve(S, 'f22_none', outNo22);
-plot_ber_curve(gca, get_curve(S, 'f22_none'), ...
+plot_ber_curve(ax, get_curve(S, 'f22_none'), ...
     struct('col', [0.5 0.5 0.5], 'mk', 'x', 'ls', ':', 'open', true), 'без синхронизации частоты');
-plot_theory(gca, cfg);
-finish_ber_axes(gca, cfg, '(а) BER, \epsilon \in (-0.5, 0.5)');
-
-nexttile;
-hold on; grid on;
-CFOS = cell(1, numel(Mlist));
-for iM = 1:numel(Mlist)
-    CFOS{iM} = cfo_error_curve(cfg, [-0.5 0.5], Mlist(iM), cfg.snrErr, cfg.nFramesErr);
-    fprintf('  СКО оценки eps (M=%d): %s\n', Mlist(iM), mat2str(CFOS{iM}, 2));
-    mkList = 'os^d';
-    loglog(gca, cfg.snrErr, CFOS{iM}, 'LineStyle', '-', 'Color', cols(iM,:), ...
-           'Marker', mkList(iM), 'MarkerSize', 5, 'LineWidth', 1.4, ...
-           'DisplayName', sprintf('M = %d', Mlist(iM)));
-    % теория: sigma_eps = 1/(2*pi*sqrt(M*Ncp*gamma))
-    gam = 10.^((cfg.snrErr + 10*log10(cfg.qamBits*numel(cfg.dataIdx)/cfg.Nused))/10);
-    th = 1./(2*pi*sqrt(Mlist(iM)*cfg.Ncp*gam));
-    loglog(gca, cfg.snrErr, th, '--', 'Color', cols(iM,:), 'LineWidth', 0.8, ...
-           'HandleVisibility', 'off');
-end
-set(gca, 'XScale', 'linear', 'YScale', 'log');
-xlabel(gca, 'E_b/N_0, дБ');
-ylabel(gca, 'СКО оценки \epsilon');
-title(gca, '(б) точность оценки ЧС (штрих - теория)');
-legend(gca, 'Location', 'southwest');
-style_axes(gca);
+plot_theory(ax, cfg);
+finish_ber_axes(ax, cfg, sprintf('Частотная синхронизация по ЦП (\\epsilon = %.3f)', eps22));
 save_figure(cfg, h, 'fig_2_2_cp_freq_M');
 
-% 2.3 Влияние длины ЦП
-NcpList = [64 128 256 512];
+% 2.3 Влияние длины циклического префикса Ncp
+%     При малых Ncp (4, 16) оценка частоты обладает большей дисперсией (СКО ~ 1/sqrt(Ncp)),
+%     что у границы +-0.5 чаще приводит к срывам/перескокам и повышает BER.
+NcpList = [4 16 64 256];
+eps23 = 0.490;
 tags23 = cell(1, numel(NcpList));
+
 for iL = 1:numel(NcpList)
     cfgL = cfg;
+    if ~strcmpi(getenv('LAB3_QUICK'), '1')
+        cfgL.nFrames   = 240;
+        cfgL.minErrors = 160000;
+        cfgL.maxFrames = 2500;
+    end
     cfgL.Ncp  = NcpList(iL);
     cfgL.Nsym = cfgL.Nfft + cfgL.Ncp;
-    scen = scen_set(make_scen(), 'epsMode', 'uniform', 'epsRange', [-0.5 0.5], ...
-                    'deltaMode', 'uniform', 'timeSync', 'cp', 'freqSync', 'cp', ...
+    scen = scen_set(make_scen(), 'epsMode', 'fixed', 'eps', eps23, ...
+                    'deltaMode', 'uniform', 'timeSync', 'genie', 'freqSync', 'cp', ...
                     'M', 1, 'useEq', true);
     tag = sprintf('f23_Ncp%d', NcpList(iL));
     out = ber_sweep(cfgL, scen, cfg.snrDb, sprintf('N_{CP} = %d', NcpList(iL)));
@@ -407,15 +380,15 @@ end
 
 h = new_figure(cfg, 'BER против длины ЦП', 'Влияние длины циклического префикса');
 ax = axes(h); hold(ax, 'on'); grid(ax, 'on');
-colsL = [0.47 0.67 0.19; 0.93 0.69 0.13; 0.85 0.33 0.10; 0.49 0.18 0.56];
+colsL = [0.85 0.33 0.10; 0.93 0.69 0.13; 0.47 0.67 0.19; 0 0.45 0.74];
+mkList = 'os^d';
 for iL = 1:numel(NcpList)
-    st = struct('col', colsL(iL,:), 'mk', 'os^d', 'ls', '-', 'open', false);
-    st.mk = st.mk(iL);
+    st = struct('col', colsL(iL,:), 'mk', mkList(iL), 'ls', '-', 'open', false);
     plot_ber_curve(ax, get_curve(S, tags23{iL}), st, ...
-        sprintf('N_{CP} = %d (%.0f%%)', NcpList(iL), 100*NcpList(iL)/cfg.Nfft));
+        sprintf('N_{CP} = %d (%.1f%%)', NcpList(iL), 100*NcpList(iL)/cfg.Nfft));
 end
 plot_theory(ax, cfg);
-finish_ber_axes(ax, cfg, 'Частотная синхронизация по ЦП, \epsilon \in (-0.5, 0.5)');
+finish_ber_axes(ax, cfg, sprintf('Частотная синхронизация по ЦП (\\epsilon = %.3f, M = 1)', eps23));
 save_figure(cfg, h, 'fig_2_3_cp_len');
 
 % 2.4 Частотная синхронизация по преамбуле Минна
@@ -449,7 +422,6 @@ plot_theory(ax, cfg);
 finish_ber_axes(ax, cfg, 'Оценка по преамбуле [A A -A -A]');
 save_figure(cfg, h, 'fig_2_4_minn_freq');
 
-
 %% Сводка результатов
 fprintf('\n=============================================================\n');
 fprintf(' СВОДКА: BER при Eb/N0 = %g дБ\n', cfg.snrRef);
@@ -470,52 +442,61 @@ diary off;
 %% ЛОКАЛЬНЫЕ ФУНКЦИИ
 
 function cfg = lab3_cfg()
-%LAB3_CFG  Единая точка настройки моделирования.
+%LAB3_CFG  Единая точка настройки параметров моделирования.
     cfg.Nfft      = 2048;                 % размер БПФ (число поднесущих)
     cfg.Ncp       = 256;                  % длина ЦП (1/8 от Nfft)
+    cfg.Nguard    = 256;                  % защитные полосы по краям (нулевые поднесущие)
     cfg.pilotStep = 4;                    % пилот на каждой 4-й поднесущей
     cfg.nDataSym  = 14;                   % OFDM-символов данных в кадре
     cfg.evalSym   = 3:12;                 % из них используются для оценки BER
     cfg.qamBits   = 4;                    % КАМ-16 -> 4 бита на символ
-    cfg.padLen    = cfg.Nfft;             % запас нулей (для отрицательных сдвигов)
     cfg.snrDb     = 0:2:30;               % Eb/N0, дБ
     cfg.snrRef    = 14;                   % опорное Eb/N0 для сводной таблицы
-    cfg.snrLow    = -12:2:0;              % низко-ОСШ диапазон (короткий ЦП)
-    cfg.snrDemo   = 0;                    % Eb/N0 для демонстрационных рисунков
-    cfg.nFrames   = 120;                  % максимум кадров на точку BER
-    cfg.minFrames = 10;                   % минимум кадров (устойчивость оценки)
-    cfg.maxErrors = 400;                  % ранняя остановка по числу ошибок
-    cfg.nAvgMetric = 20;                  % усреднение метрики по кадрам
+    cfg.snrDemo   = 0;                    % Eb/N0 для демонстрации преамбулы и Рис. 0
+    cfg.snrMetric12 = 10;                 % Eb/N0 для АКФ ЦП в п. 1.2 (как в эталоне)
+    cfg.nFrames   = 40;                   % число кадров на точку BER (базовое)
+    cfg.nFramesFine = 200;                % число кадров для тонких эффектов в п. 1.3, 2.2, 2.3
+    cfg.nAvgMetric = 80;                  % усреднение метрики Минна по кадрам
+    cfg.nAvgMetric12 = 50;                % усреднение АКФ по ЦП в п. 1.2
     cfg.snrDelta  = 12;                   % Eb/N0 для развёртки по delta
-    cfg.nFramesDelta = 40;                % кадров на точку развёртки по delta
-    cfg.snrErr    = -10:2:10;             % Eb/N0 для оценки точности ЧС
-    cfg.nFramesErr = 20;                  % кадров на точку кривой точности
+    cfg.nFramesDelta = 30;                % кадров на точку развёртки по delta
     cfg.seed      = 20241003;
-    cfg.minChannelGain = 0.1;             % защита при делении на оценку канала
     cfg.figureResolution = 170;
 
     % быстрый отладочный режим
     if strcmpi(getenv('LAB3_QUICK'), '1')
-        cfg.nFrames = 6; cfg.maxErrors = 40; cfg.snrDb = 0:6:12; cfg.nAvgMetric = 4;
-        cfg.nFramesDelta = 4; cfg.snrLow = -12:6:0;
+        cfg.nFrames = 4; cfg.nFramesFine = 4; cfg.snrDb = 0:6:12;
+        cfg.nAvgMetric = 4; cfg.nAvgMetric12 = 4;
+        cfg.nFramesDelta = 4;
     end
 
     cfg.Nsym  = cfg.Nfft + cfg.Ncp;
-    cfg.Nused = cfg.Nfft - 1;             % активные поднесущие (без DC)
+    cfg.padLen = cfg.Nfft + 1024 + 2*cfg.Nsym; % запас нулей от выхода за границы
 
-    % --- карта поднесущих ---------------------------------------------
-    kk = 0:cfg.Nfft-1;
-    cfg.dcIdx    = cfg.Nfft/2 + 1;                          % нулевая (DC) поднесущая
-    cfg.pilotIdx = find(mod(kk, cfg.pilotStep) == 0).';      % пилоты (КАМ-4)
-    cfg.pilotIdx = setdiff(cfg.pilotIdx, cfg.dcIdx).';
-    cfg.dataIdx  = setdiff((1:cfg.Nfft).', union(cfg.pilotIdx, cfg.dcIdx));
+    % --- Частотный план: центрированная сетка (-N/2 ... N/2 - 1) -----
+    % DC-поднесущая (0 Гц) расположена в центре спектра (индекс Nfft/2 + 1)
+    cfg.dcIdx = cfg.Nfft/2 + 1;
 
-    % --- известные последовательности (детерминированные) -------------
-    cfg.pilotSyms    = qpsk_seq(numel(cfg.pilotIdx), 12345);
-    cfg.preambleTime = minn_preamble_time(cfg);              % [A A -A -A]
-    cfg.preambleX    = fft(cfg.preambleTime) / sqrt(cfg.Nfft);   % спектр преамбулы
+    % Защитные полосы (нули) слева (1..Nguard) и справа (Nfft-Nguard+1..Nfft)
+    activeIdx = (cfg.Nguard + 1) : (cfg.Nfft - cfg.Nguard);
 
-    % --- каталоги и видимость графиков --------------------------------
+    % Пилоты (КАМ-4) с шагом pilotStep внутри активной полосы
+    pilotCand = activeIdx(mod(activeIdx, cfg.pilotStep) == 0).';
+    cfg.pilotIdx = setdiff(pilotCand, cfg.dcIdx);
+
+    % Поднесущие данных (КАМ-16)
+    cfg.dataIdx  = setdiff(activeIdx(:), union(cfg.pilotIdx, cfg.dcIdx));
+    cfg.Nused    = numel(cfg.dataIdx) + numel(cfg.pilotIdx);
+
+    % --- Известные последовательности (детерминированные) -------------
+    % Пилоты: детерминированные известные символы КАМ-4 единичной мощности с плоским спектром
+    pStream = RandStream('mt19937ar', 'Seed', 12345);
+    pBits = randi(pStream, [0 1], 2, numel(cfg.pilotIdx));
+    cfg.pilotSyms    = qammod(pBits, 4, 'InputType', 'bit', 'UnitAveragePower', true).';
+    cfg.preambleTime = minn_preamble_time(cfg);                  % [A A -A -A]
+    cfg.preambleX    = fftshift(fft(cfg.preambleTime));
+
+    % --- Каталоги и видимость графиков --------------------------------
     p = fileparts(mfilename('fullpath'));
     if isempty(p); p = pwd; end
     cfg.outDir = p;
@@ -529,16 +510,17 @@ function [frame, tx] = lab_frame(cfg)
     N = cfg.Nfft;  Ncp = cfg.Ncp;
     nSym = 1 + cfg.nDataSym;
     X = zeros(N, nSym);
-    X(:, 1) = cfg.preambleX;                       % преамбула (все поднесущие)
+    X(:, 1) = cfg.preambleX;                       % преамбула (центрированный спектр)
 
-    % биты полезной нагрузки: 4 x Ndata x nDataSym
-    bits = randi([0 1], cfg.qamBits, numel(cfg.dataIdx), cfg.nDataSym);
-    syms = qam16_map(reshape(bits, cfg.qamBits, []));          % 1 x (Ndata*nSym)
-    X(cfg.dataIdx, 2:end)  = reshape(syms, numel(cfg.dataIdx), cfg.nDataSym);
+    % Полезные биты: [4*numel(cfg.dataIdx), cfg.nDataSym]
+    bits = randi([0 1], cfg.qamBits * numel(cfg.dataIdx), cfg.nDataSym);
+    syms = qammod(bits, 16, 'InputType', 'bit', 'UnitAveragePower', true);
+    X(cfg.dataIdx, 2:end)  = syms;
     X(cfg.pilotIdx, 2:end) = repmat(cfg.pilotSyms, 1, cfg.nDataSym);
 
-    x = ifft(X, N, 1) * sqrt(N);                   % OFDM-модуляция (Parseval)
-    xcp = [x(N-Ncp+1:N, :); x];                    % добавление ЦП
+    % Стандартное ОБПФ (без *sqrt(N)): средняя мощность отсчёта данных = Nused / Nfft^2
+    x = ifft(ifftshift(X, 1), N, 1);
+    xcp = [x(N-Ncp+1:N, :); x];                    % добавление циклического префикса
     frame = xcp(:);
     tx.bits = bits;
     tx.X = X;
@@ -547,15 +529,14 @@ end
 % ------------------------------------------------------------------------
 function [rx, ch] = lab_channel(cfg, frame, delta, epsNorm, ebnoDb)
 %LAB_CHANNEL  Канал: временной сдвиг, частотный сдвиг, АБГШ.
-%   Соглашение о знаке delta (как в методичке):
-%     -Ncp <= delta < 0 - окно БПФ начинается внутри ЦП: МСИ нет, только
-%                         фазовый наклон по поднесущим;
+%   Соглашение о знаке delta:
+%     -Ncp <= delta < 0 - окно БПФ внутри ЦП: МСИ нет, только фазовый наклон;
 %     delta < -Ncp      - окно выходит за пределы ЦП: появляется МСИ;
 %     delta > 0         - окно запаздывает: МСИ из следующего символа.
     N = cfg.Nfft;  P = cfg.padLen;
-    nTail = P + abs(delta) + 8;
+    nTail = P + abs(delta) + 2*cfg.Nsym;
     rx = zeros(numel(frame) + P + nTail, 1);
-    start = P + 1 - delta;                          % ПЕРВЫЙ отсчёт кадра
+    start = P + 1 - delta;                          % первый отсчёт кадра
     rx(start:start+numel(frame)-1) = frame;
 
     % частотный сдвиг: r[n] = s[n] * exp(j*2*pi*eps*n/N)
@@ -564,10 +545,12 @@ function [rx, ch] = lab_channel(cfg, frame, delta, epsNorm, ebnoDb)
         rx = rx .* exp(1j*2*pi*epsNorm*n/N);
     end
 
-    % АБГШ: мощность шума из Eb/N0 с учётом служебных поднесущих
-    gammaDb = ebnoDb + 10*log10(cfg.qamBits*numel(cfg.dataIdx)/cfg.Nused);
-    sigma2  = (cfg.Nused/N) / (10^(gammaDb/10));
-    rx = rx + sqrt(sigma2/2)*(randn(size(rx)) + 1j*randn(size(rx)));
+    % АБГШ: формула с семинара с учетом единичной мощности созвездия (UnitAveragePower) и 1/Nfft
+    Ps = mean(abs(qammod(0:15, 16, 'UnitAveragePower', true)).^2) / cfg.qamBits / N;
+    N0 = Ps / (10^(ebnoDb / 10));
+    sigma2 = N0;
+    noise = sqrt(sigma2 / 2) * (randn(size(rx)) + 1j * randn(size(rx)));
+    rx = rx + noise;
 
     ch.delta = delta; ch.eps = epsNorm; ch.sigma2 = sigma2;
 end
@@ -575,7 +558,7 @@ end
 % ------------------------------------------------------------------------
 function [dHat, info] = lab_sync(cfg, scen, rx, delta)
 %LAB_SYNC  Временная и частотная синхронизация приёмника.
-%   dHat - оценка положения ПЕРВОГО отсчёта ЦП первого символа кадра.
+%   dHat - оценка положения первого отсчёта ЦП первого символа кадра.
     dNom = cfg.padLen + 1;                          % ожидаемое начало кадра
     info.metric = []; info.axis = [];
 
@@ -584,8 +567,8 @@ function [dHat, info] = lab_sync(cfg, scen, rx, delta)
             dHat = dNom;
         case 'genie'                                % точное положение (идеал)
             dHat = dNom - delta;
-        case 'cp'                                   % по циклическому префиксу
-            [dHat, info.metric, info.axis] = cp_metric(rx, cfg, scen.M, dNom);
+        case 'cp'                                   % слепая оценка по |АКФ| ЦП (как в timeSync.m)
+            [dHat, info.metric, info.axis] = cp_metric(rx, cfg, scen.M, dNom, 'abs');
         case 'minn'                                 % по преамбуле Минна
             [dHat, info.metric, info.axis] = minn_metric(rx, cfg, dNom);
         otherwise
@@ -619,21 +602,30 @@ function [nErr, nBit] = frame_trial(cfg, scen, ebnoDb)
     kSym = 1 + cfg.evalSym;                         % сдвиг на преамбулу
     win  = dHat + cfg.Ncp + (kSym - 1)*cfg.Nsym;
     idx  = win + (0:cfg.Nfft-1).';
+
+    bitsRef = tx.bits(:, cfg.evalSym);
+    nBit = numel(bitsRef);
+
     if any(idx(:) < 1) || any(idx(:) > numel(rxc))
-        nErr = 0; nBit = 0; return;
+        % Катастрофический срыв синхронизации (окно за пределами массива)
+        nErr = nBit;
+        return;
     end
 
-    Y = fft(rxc(idx), [], 1) / sqrt(cfg.Nfft);      % N x nEval
+    % Приемное БПФ (без /sqrt(Nfft)) с переводом спектра в центрированный вид
+    Y = fftshift(fft(rxc(idx), [], 1), 1);                       % N x nEval
 
     if scen.useEq
-        H = lab_channel_estimate(cfg, Y);
+        if isfield(scen, 'eqMode') && strcmp(scen.eqMode, 'cfo21')
+            H = lab_channel_estimate_21(cfg, Y);
+        else
+            H = lab_channel_estimate(cfg, Y);
+        end
         Y = Y ./ H;
     end
 
-    bitsHat = qam16_demap(Y(cfg.dataIdx, :));
-    bitsRef = tx.bits(:, :, cfg.evalSym);
+    bitsHat = qamdemod(Y(cfg.dataIdx, :), 16, 'OutputType', 'bit', 'UnitAveragePower', true);
     nErr = sum(bitsHat(:) ~= bitsRef(:));
-    nBit = numel(bitsRef);
 end
 
 % ------------------------------------------------------------------------
@@ -659,87 +651,124 @@ end
 
 % ------------------------------------------------------------------------
 function H = lab_channel_estimate(cfg, Y)
-%LAB_CHANNEL_ESTIMATE  Оценка канала по пилотам (два прохода + наклон ФЧХ).
-%   1) МНК-оценка на пилотных поднесущих: Hp = Y(p)/P(p);
-%   2) "форма" Hn = Hp/Hp(1,:) одинакова для всех символов кадра (в ней
-%      сохраняется фазовый наклон от временного сдвига), поэтому усредняется
-%      по символам - шум оценки падает в sqrt(nSym) раз;
-%   3) по среднему приращению фазы между пилотами оценивается наклон ФЧХ
-%      (остаточная задержка) и форма "выпрямляется" перед интерполяцией -
-%      иначе линейная интерполяция комплексных чисел на крутом наклоне даёт
-%      большую ошибку амплитуды;
-%   4) общая фаза каждого символа cpe(m) оценивается как среднее Hp/Hshape по
-%      всем 511 пилотам (шум падает в sqrt(511) раз);
-%   5) H(k,m) = Hshape(k) * cpe(m).
-    pos  = cfg.pilotIdx(:);
+%LAB_CHANNEL_ESTIMATE  Оценка канала по пилотам (МНК, наклон ФЧХ и фаза символа).
+%   1) МНК-оценка на пилотных поднесущих:
+    Hp = Y(cfg.pilotIdx, :) ./ cfg.pilotSyms;        % [numPilots x nSym]
+    pos = cfg.pilotIdx(:);
     grid = (1:cfg.Nfft).';
-    Hp   = Y(cfg.pilotIdx, :) ./ cfg.pilotSyms;     % 511 x nSym, МНК на пилотах
 
-    ref = Hp(1, :);                                % опорный пилот каждого символа
-    ref(abs(ref) < realmin) = realmin;
-    Hn  = Hp ./ ref;                               % форма, общая для всех символов
-    Hm  = mean(Hn, 2);                             % 511 x 1, усреднение по символам
+%   2) Оценка наклона ФЧХ (компенсация временного сдвига delta внутри ЦП):
+%      Между соседними пилотами фаза набегает как exp(-j*2*pi*delta*k/N).
+%      Оцениваем наклон slope, чтобы устранить сокращение хорды при интерполяции:
+    posDiff = diff(pos);
+    valid = (posDiff == cfg.pilotStep);             % исключаем разрыв вокруг DC
+    dph = angle(Hp(2:end, :) .* conj(Hp(1:end-1, :)));
+    slope = median(dph(valid, :) / cfg.pilotStep, 'all');
 
-    dph   = angle(Hm(2:end) .* conj(Hm(1:end-1))); % приращения фазы между пилотами
-    slope = median(dph ./ diff(pos));              % рад на поднесущую (наклон ФЧХ)
-    Hd    = Hm .* exp(-1j*slope*pos);              % "выпрямленная" форма
+%   3) Устранение наклона фазы и усреднение формы канала по символам кадра:
+    Hp_flat = Hp .* exp(-1j * slope * pos);
+    Hm = mean(Hp_flat, 2);
 
-    Hr = interp1(pos, real(Hd), grid, 'linear', 'extrap');
-    Hi = interp1(pos, imag(Hd), grid, 'linear', 'extrap');
-    Hshape = (Hr + 1j*Hi) .* exp(1j*slope*grid);   % 2048 x 1
+%   4) Линейная интерполяция выпрямленной формы и возврат наклона ФЧХ:
+    H_flat = interp1(pos, Hm, grid, 'linear', 'extrap');
+    Hshape = H_flat .* exp(1j * slope * grid);
 
-    cpe = mean(Hp ./ Hm, 1);                       % 1 x nSym, общая фаза символа
-    H   = Hshape * cpe;                            % 2048 x nSym
+%   5) Оценка общей фазы каждого символа (CPE - Common Phase Error) для ЧС:
+    cpe = mean(Hp ./ (Hshape(cfg.pilotIdx) * ones(1, size(Hp, 2))), 1);
+    cpe = cpe ./ max(abs(cpe), realmin);             % сохраняем единичную амплитуду
 
+%   6) Результирующая оценка канала для каждого символа:
+    H = Hshape * cpe;
     mag = abs(H);
-    bad = mag < cfg.minChannelGain;                % защита от деления на ~0
-    H(bad) = cfg.minChannelGain * exp(1j*angle(H(bad)));
+    bad = mag < 0.1;
+    H(bad) = 0.1 * exp(1j * angle(H(bad)));
 end
 
 % ------------------------------------------------------------------------
-function [dHat, metric, axisD] = cp_metric(rx, cfg, M, dNom)
-%CP_METRIC  Метрика временной синхронизации по ЦП с когерентным накоплением.
-%   M(d) = |sum_m A(d + m*Nsym)|^2 / (sum_m P(d + m*Nsym))^2,
-%   A(d) = sum_{i=0}^{Ncp-1} r*(d+i) r(d+i+Nfft)  - корреляция ЦП и его копии.
+function H = lab_channel_estimate_21(cfg, Y)
+%LAB_CHANNEL_ESTIMATE_21  Локальная посимвольная оценка для сценария 2.1 (без ЧС).
+%   Отслеживает фазовый набег каждого OFDM-символа при расстройке eps,
+%   предотвращая взаимное погашение пилотов при усреднении по символам.
+    Hp = Y(cfg.pilotIdx, :) ./ cfg.pilotSyms;        % [numPilots x nSym]
+    pos = cfg.pilotIdx(:);
+    grid = (1:cfg.Nfft).';
+
+    posDiff = diff(pos);
+    valid = (posDiff == cfg.pilotStep);             % исключаем разрыв вокруг DC
+    dph = angle(Hp(2:end, :) .* conj(Hp(1:end-1, :)));
+    slope = median(dph(valid, :) / cfg.pilotStep, 1); % [1 x nSym] посимвольно
+
+    Hp_flat = Hp .* exp(-1j * (pos * slope));
+    H_flat = interp1(pos, Hp_flat, grid, 'linear', 'extrap');
+    H = H_flat .* exp(1j * (grid * slope));
+    mag = abs(H);
+    bad = mag < 0.1;
+    H(bad) = 0.1 * exp(1j * angle(H(bad)));
+end
+
+% ------------------------------------------------------------------------
+function [dHat, metric, axisD] = cp_metric(rx, cfg, M, dNom, metricMode)
+%CP_METRIC  Слепая метрика временной синхронизации по ЦП с когерентным накоплением.
+%   metricMode = 'abs' (по умолчанию) использует модуль |АКФ| (как в timeSync.m п. 3);
+%   metricMode = 'rho' использует нормировку 2*|Aacc| / Pacc (для Рис. 0).
+    if nargin < 5 || isempty(metricMode)
+        metricMode = 'abs';
+    end
     N = cfg.Nfft;  L = cfg.Ncp;  Nsym = cfg.Nsym;
     r = rx(:);
     r2 = abs(r).^2;
 
     c  = conj(r(1:end-N)) .* r(1+N:end);            % попарные произведения
     cs = [0; cumsum(c)];                            % префиксные суммы
-    e  = [0; cumsum(r2)];
 
     nc   = numel(c);
     dmax = nc - L + 1;
     dd   = (1:dmax).';
-    A    = cs(dd+L) - cs(dd);                                       % числитель
-    Pn   = (e(dd+L) - e(dd)) + (e(dd+N+L) - e(dd+N));               % энергия
+    A    = cs(dd+L) - cs(dd);                       % корреляция окна ЦП и хвоста
 
-    dValid = dmax - (M-1)*Nsym;
-    if dValid < 1; error('cp_metric:short', 'Сигнал короче окна накопления'); end
-
-    Aacc = A(1:dValid);
-    Pacc = Pn(1:dValid);
-    for m = 1:M-1
-        s = m*Nsym;
-        Aacc = Aacc + A(1+s : dValid+s);
-        Pacc = Pacc + Pn(1+s : dValid+s);
+    if strcmpi(metricMode, 'rho')
+        dValid = dmax - (M-1)*Nsym;
+        if dValid < 1; error('cp_metric:short', 'Сигнал короче окна накопления'); end
+        Aacc = A(1:dValid);
+        for m = 1:M-1
+            s = m*Nsym;
+            Aacc = Aacc + A(1+s : dValid+s);
+        end
+        e  = [0; cumsum(r2)];
+        Pn = (e(dd+L) - e(dd)) + (e(dd+N+L) - e(dd+N));
+        Pacc = Pn(1:dValid);
+        for m = 1:M-1
+            s = m*Nsym;
+            Pacc = Pacc + Pn(1+s : dValid+s);
+        end
+        P_thresh = 0.25 * max(Pacc);
+        metric = 2 * abs(Aacc) ./ max(Pacc, P_thresh);
+    else
+        % Для 'abs' (п. 1.3) накапливаем по M случайным информационным OFDM-символам (m = 1..M),
+        % чтобы при M = 1 не захватывалась детерминированная преамбула после нулевой паузы.
+        dValid = dmax - M*Nsym;
+        if dValid < 1; error('cp_metric:short', 'Сигнал короче окна накопления'); end
+        Aacc = A(1+Nsym : dValid+Nsym);
+        for m = 2:M
+            s = m*Nsym;
+            Aacc = Aacc + A(1+s : dValid+s);
+        end
+        metric = abs(Aacc) / M;
     end
-    metric = abs(Aacc).^2 ./ max(Pacc.^2, realmin);
 
+    % Слепое обзорное окно по всей области возможного прихода кадра
     lo = max(1, dNom - floor(N/2) - 64);
     hi = min(dValid, dNom + ceil(N/2) + 64);
     [~, k] = max(metric(lo:hi));
-    dHat   = lo + k - 1;                            % метрика ЦП даёт начало ЦП
+    dHat   = lo + k - 1;                            % максимум корреляции
     axisD  = (lo:hi).' - dNom;
     metric = metric(lo:hi);
 end
 
 % ------------------------------------------------------------------------
 function [dHat, metric, axisD] = minn_metric(rx, cfg, dNom)
-%MINN_METRIC  Метрика Минна по преамбуле [A A -A -A].
-%   P(d) = sum_{m=0}^{2} b(m) * sum_{n} r*(d+n+mL) r(d+n+(m+1)L),
-%   b = [+1 -1 +1]  - веса Минна, устраняющие "плато" метрики Шмидла-Кокса.
+%MINN_METRIC  Двухполовинная метрика Минна по преамбуле [A A -A -A] (из timeSync.m).
+%   P = P1 + P2, Metric = |P|^2 / (E1 * E2) с порогом защиты от нулевой паузы.
     N = cfg.Nfft;  L = N/4;
     r = rx(:);
 
@@ -750,18 +779,28 @@ function [dHat, metric, axisD] = minn_metric(rx, cfg, dNom)
     nc   = numel(c);
     dmax = nc - L + 1;
     dd   = (1:dmax).';
-    P0   = cs(dd+L) - cs(dd);                       % корреляция соседних блоков
+    P0   = cs(dd+L) - cs(dd);                       % корреляция соседних блоков длины L
 
     dValid = numel(r) - 4*L + 1;
     if dValid < 1; error('minn_metric:short', 'Сигнал короче преамбулы'); end
-    P = P0(1:dValid) - P0(1+L : dValid+L) + P0(1+2*L : dValid+2*L);
-    R = e((1:dValid) + 4*L) - e(1:dValid);          % энергия четырёх блоков
-    metric = abs(P).^2 ./ max(R.^2, realmin);
+
+    P1 = P0(1:dValid);
+    P2 = P0(1+2*L : dValid+2*L);
+    P  = P1 + P2;
+
+    E1 = e((1:dValid) + 2*L) - e(1:dValid);
+    E2 = e((1:dValid) + 4*L) - e((1:dValid) + 2*L);
 
     lo = max(1, dNom + cfg.Ncp - floor(N/2) - 64);
     hi = min(dValid, dNom + cfg.Ncp + ceil(N/2) + 64);
+
+    eWin = E2(lo:hi);
+    eAct = median(eWin(eWin > 0.5 * max(eWin)));
+    eFloor = 0.85 * eAct;
+    metric = abs(P).^2 ./ (max(E1, eFloor) .* max(E2, eFloor));
+
     [~, k] = max(metric(lo:hi));
-    dHat   = max(1, lo + k - 1 - cfg.Ncp);          % метрика Минна даёт начало тела
+    dHat   = max(1, lo + k - 1 - cfg.Ncp);          % оценка начала кадра
     axisD  = (lo:hi).' - (dNom + cfg.Ncp);
     metric = metric(lo:hi);
 end
@@ -781,16 +820,14 @@ end
 
 % ------------------------------------------------------------------------
 function epsHat = cfo_from_minn(rx, cfg, dHat)
-%CFO_FROM_MINN  Оценка расстройки по преамбуле Минна (диапазон |eps|<2).
-%   dHat - начало ЦП преамбулы, поэтому блоки начинаются с dHat + Ncp.
+%CFO_FROM_MINN  Оценка расстройки по преамбуле Минна (диапазон |eps|<2, как в freqSync.m).
     N = cfg.Nfft;  L = N/4;
     r = rx(:);
-    i0 = dHat + cfg.Ncp;                            % начало тела преамбулы
-    p0 = sum(conj(r(i0 + (0:L-1)))       .* r(i0 + L   + (0:L-1)));
-    p1 = sum(conj(r(i0 + L + (0:L-1)))   .* r(i0 + 2*L + (0:L-1)));
-    p2 = sum(conj(r(i0 + 2*L + (0:L-1))) .* r(i0 + 3*L + (0:L-1)));
-    acc = p0 - p1 + p2;                             % веса Минна [+1 -1 +1]
-    epsHat = angle(acc) * N / (2*pi*L);
+    i0 = dHat + cfg.Ncp;                            % начало тела преамбулы [A A -A -A]
+    P1 = sum(conj(r(i0 + (0:L-1)))       .* r(i0 + L   + (0:L-1)));
+    P2 = sum(conj(r(i0 + 2*L + (0:L-1))) .* r(i0 + 3*L + (0:L-1)));
+    P = P1 + P2;
+    epsHat = (2 / pi) * angle(P);
 end
 
 % ------------------------------------------------------------------------
@@ -805,56 +842,21 @@ function rxc = cfo_correct(cfg, rx, epsHat)
 end
 
 % ------------------------------------------------------------------------
-function s = qam16_map(bits)
-%QAM16_MAP  КАМ-16 с кодами Грея, средняя мощность 1.
-%   bits - матрица 4 x N (строки: b1 b2 -> I, b3 b4 -> Q).
-    b1 = bits(1,:); b2 = bits(2,:); b3 = bits(3,:); b4 = bits(4,:);
-    vi = 2*b1 + xor(b1, b2);                        % 0..3 (00,01,11,10)
-    vq = 2*b3 + xor(b3, b4);
-    s  = ((2*vi - 3) + 1j*(2*vq - 3)) / sqrt(10);
-end
-
-% ------------------------------------------------------------------------
-function bits = qam16_demap(syms)
-%QAM16_DEMAP  Жёсткие решения по КАМ-16 (обратное к QAM16_MAP).
-    lev = [-3 -1 1 3];
-    v   = sqrt(10) * syms(:);                       % возврат к уровням +-1,+-3
-    [~, vi] = min(abs(real(v) - lev), [], 2);
-    [~, vq] = min(abs(imag(v) - lev), [], 2);
-    vi = vi - 1;  vq = vq - 1;
-    b1 = vi >= 2;  b2 = (vi == 1) | (vi == 2);
-    b3 = vq >= 2;  b4 = (vq == 1) | (vq == 2);
-    bits = [b1, b2, b3, b4].';                  % 4 x N, как у qam16_map
-end
-
-% ------------------------------------------------------------------------
-function s = qpsk_seq(n, seed)
-%QPSK_SEQ  Детерминированная последовательность КАМ-4 единичной мощности.
-%   Генератор Лемера (Парка-Миллера): x <- 48271*x mod (2^31-1).
-%   Все произведения < 2^53, поэтому арифметика в double точна.
-    a = 48271;  m = 2147483647;
-    x = mod(abs(seed), m);
-    if x == 0; x = 1; end
-    s = zeros(n, 1);
-    for i = 1:n
-        x = mod(a*x, m);
-        s(i) = ((1 - 2*mod(x, 2)) + 1j*(1 - 2*mod(floor(x/2), 2))) / sqrt(2);
-    end
-end
-
-% ------------------------------------------------------------------------
 function y = minn_preamble_time(cfg)
-%MINN_PREAMBLE_TIME  Преамбула [A A -A -A] (4 одинаковых блока, знаки + + - -).
+%MINN_PREAMBLE_TIME  Преамбула [A A -A -A] с согласованной с данными мощностью.
     N = cfg.Nfft;  L = N/4;
-    q = qpsk_seq(L, 54321);
-    A = ifft(q, L) * sqrt(L);                       % блок единичной мощности
+    stream = RandStream('mt19937ar', 'Seed', 54321);
+    b = randi(stream, [0 1], 2, L);
+    q = qammod(b, 4, 'InputType', 'bit', 'UnitAveragePower', true).';
+    A = ifft(q(:), L) * sqrt(L);                       % блок единичной мощности
     y = [A; A; -A; -A];
-    y = y / sqrt(mean(abs(y).^2));                  % нормировка мощности
+    y = y / sqrt(mean(abs(y).^2));                     % единичная средняя мощность
+    y = y * sqrt(cfg.Nused) / N;                       % мощность равна мощности OFDM-символов
 end
 
 % ------------------------------------------------------------------------
 function [acf, lags] = cyclic_acf(y)
-%CYCLIC_ACF  Циклическая автокорреляционная функция (через спектр).
+%CYCLIC_ACF  Циклическая автокорреляционная функция (через спектр мощности).
     y = y(:);
     N = numel(y);
     Y = fft(y);
@@ -866,7 +868,7 @@ end
 
 % ------------------------------------------------------------------------
 function idx = findpeaks_simple(acf, lags)
-%FINDPEAKS_SIMPLE  Локальные максимумы АКФ (без Signal Processing Toolbox).
+%FINDPEAKS_SIMPLE  Локальные максимумы АКФ.
     idx = [];
     for i = 2:numel(acf)-1
         if acf(i) > acf(i-1) && acf(i) >= acf(i+1) && acf(i) > 0.2
@@ -879,20 +881,40 @@ function idx = findpeaks_simple(acf, lags)
 end
 
 % ------------------------------------------------------------------------
-function [mAvg, axisD] = metric_shape(cfg, scen, M, ebnoDb, nAvg)
-%METRIC_SHAPE  Усреднённая по кадрам метрика временной синхронизации по ЦП.
-    mAvg = [];  axisD = [];
+function [mAvg, axisD] = metric_shape(cfg, ~, M, ebnoDb, nAvg)
+%METRIC_SHAPE  Усреднённая комплексная АКФ по ЦП (без деления на энергию и максимум).
+%   Повторяет Пункт 2 эталона timeSync.m: ACF усредняется по M символам и по
+%   nAvg реализациям до взятия модуля abs(ACF_avg).
+    N = cfg.Nfft;  L = cfg.Ncp;  Nsym = cfg.Nsym;
+    % Центрируем на информационном символе (символ 2: dNom = padLen + 1 + Nsym)
+    dNom = cfg.padLen + 1 + cfg.Nsym;
+    A_sum = []; axisD = [];
     for i = 1:nAvg
         txFrame = lab_frame(cfg);
-        [delta, epsNorm] = scen_impairment(cfg, scen);
-        rx = lab_channel(cfg, txFrame, delta, epsNorm, ebnoDb);
-        [~, m, ax] = cp_metric(rx, cfg, M, cfg.padLen + 1);
-        if isempty(mAvg)
-            mAvg = zeros(size(m));  axisD = ax;
+        rx = lab_channel(cfg, txFrame, 0, 0, ebnoDb);
+        r = rx(:);
+        c  = conj(r(1:end-N)) .* r(1+N:end);
+        cs = [0; cumsum(c)];
+        nc = numel(c);
+        dmax = nc - L + 1;
+        dd = (1:dmax).';
+        A = cs(dd+L) - cs(dd);
+        dValid = dmax - (M-1)*Nsym;
+        Aacc = A(1:dValid);
+        for m = 1:M-1
+            s = m*Nsym;
+            Aacc = Aacc + A(1+s : dValid+s);
         end
-        mAvg = mAvg + m;
+        Aacc = Aacc / M;                            % усреднение по M символам
+        lo = max(1, dNom - floor(1.4*L));
+        hi = min(dValid, dNom + floor(1.4*L));
+        if isempty(A_sum)
+            A_sum = zeros(hi - lo + 1, 1);
+            axisD = (lo:hi).' - dNom;
+        end
+        A_sum = A_sum + Aacc(lo:hi);
     end
-    mAvg = mAvg / nAvg;
+    mAvg = abs(A_sum / nAvg);
 end
 
 % ------------------------------------------------------------------------
@@ -911,36 +933,11 @@ function [mAvg, axisD] = minn_metric_shape(cfg, scen, ebnoDb, nAvg)
 end
 
 % ------------------------------------------------------------------------
-function rmsErr = cfo_error_curve(cfg, epsRange, M, snrDb, nFrames)
-%CFO_ERROR_CURVE  СКО оценки нормированной ЧС при точном положении кадра.
+function ber = ber_point(cfg, scen, ebnoDb, nFrames)
+%BER_POINT  Расчёт BER при фиксированном Eb/N0.
     rng(cfg.seed);
-    rmsErr = zeros(size(snrDb));
-    for i = 1:numel(snrDb)
-        acc = 0;
-        for f = 1:nFrames
-            txFrame = lab_frame(cfg);
-            epsTrue = epsRange(1) + diff(epsRange)*rand;
-            delta   = randi([-cfg.Nfft/2, cfg.Nfft/2 - 1]);
-            rx = lab_channel(cfg, txFrame, delta, epsTrue, snrDb(i));
-            dHat = cfg.padLen + 1 - delta;          % точное положение кадра
-            epsHat = cfo_from_cp(rx, cfg, dHat, M);
-            % ошибка считается "по кругу": оценка определена с точностью до
-            % целого числа периодов, иначе редкие переходы через +-0.5 дают
-            % выбросы, которые портят СКО
-            err = mod(epsHat - epsTrue + 0.5, 1) - 0.5;
-            acc = acc + err^2;
-        end
-        rmsErr(i) = sqrt(acc/nFrames);
-    end
-end
-
-% ------------------------------------------------------------------------
-function ber = ber_point(cfg, scen, ebnoDb, nFrames, maxErr)
-%BERR_POINT  BER при фиксированном Eb/N0 (для развёрток по параметру).
-    rng(cfg.seed);
-    nErr = 0; nBit = 0; nf = 0;
-    while nf < nFrames && nErr < maxErr
-        nf = nf + 1;
+    nErr = 0; nBit = 0;
+    for nf = 1:nFrames
         [e, n] = frame_trial(cfg, scen, ebnoDb);
         nErr = nErr + e;  nBit = nBit + n;
     end
@@ -954,25 +951,37 @@ end
 
 % ------------------------------------------------------------------------
 function out = ber_sweep(cfg, scen, snrDb, label)
-%BER_SWEEP  Монте-Карло: BER от Eb/N0 с ранней остановкой по ошибкам.
-    rng(cfg.seed);                                  % общий поток случайных чисел
+%BER_SWEEP  Расчёт кривой помехоустойчивости (BER от Eb/N0) с опциональным
+%   адаптивным набором кадров по числу битовых ошибок.
+    rng(cfg.seed);
     out.snr = snrDb(:).';
     out.ber = nan(size(snrDb));
     out.err = zeros(size(snrDb));
     out.bits = zeros(size(snrDb));
     out.label = label;
 
+    hasMinErr = isfield(cfg, 'minErrors') && cfg.minErrors > 0;
+    minF = cfg.nFrames;
+    maxF = cfg.nFrames;
+    minE = 0;
+    if hasMinErr && isfield(cfg, 'maxFrames') && cfg.maxFrames > minF
+        maxF = cfg.maxFrames;
+        minE = cfg.minErrors;
+    end
+
     for i = 1:numel(snrDb)
-        nErr = 0; nBit = 0; nFrames = 0;
-        while nFrames < cfg.nFrames && (nErr < cfg.maxErrors || nFrames < cfg.minFrames)
-            nFrames = nFrames + 1;
+        nErr = 0; nBit = 0; nDone = 0;
+        stopHighSnr = (i > 1) && ~isnan(out.ber(i-1)) && (out.ber(i-1) < 1.5e-5);
+        frameCap = ternary(stopHighSnr, minF, maxF);
+        while nDone < frameCap && (nDone < minF || (hasMinErr && nErr < minE))
+            nDone = nDone + 1;
             [e, n] = frame_trial(cfg, scen, snrDb(i));
             nErr = nErr + e;  nBit = nBit + n;
         end
         out.err(i) = nErr;  out.bits(i) = nBit;
         if nBit > 0; out.ber(i) = nErr/nBit; end
-        fprintf('  %-40s Eb/N0=%4.0f дБ: BER=%.3e (%4d/%6d, кадров %3d)\n', ...
-                label, snrDb(i), out.ber(i), nErr, nBit, nFrames);
+        fprintf('  %-40s Eb/N0=%4.0f дБ: BER=%.3e (%4d/%6d, кадров %4d)\n', ...
+                label, snrDb(i), out.ber(i), nErr, nBit, nDone);
     end
 end
 
@@ -1026,27 +1035,15 @@ end
 
 % ------------------------------------------------------------------------
 function plot_theory(ax, cfg)
-%PLOT_THEORY  Теоретическая кривая КАМ-16 с кодами Грея в канале с АБГШ.
-%   Точная вероятность ошибки на бит для 16-КАМ с кодом Грея:
-%       Pb = 0.75*Q(a) + 0.25*Q(3a),   a = sqrt(gamma/5),
-%   где gamma = Es/N0 на поднесущую. Первое слагаемое - ошибка "в соседний
-%   уровень", второе - редкая ошибка "через уровень". При больших gamma
-%   второе слагаемое исчезает, и Pb = 0.75*Q(a) = SER/4, где
-%   SER = 3*Q(a) - 2.25*Q(a)^2 - вероятность ошибки на символ.
+%PLOT_THEORY  Теоретическая кривая помехоустойчивости КАМ-16 в АБГШ (berawgn).
     snr = linspace(cfg.snrDb(1), cfg.snrDb(end), 301);
-    gammaDb = snr + 10*log10(cfg.qamBits*numel(cfg.dataIdx)/cfg.Nused);
-    gam = 10.^(gammaDb/10);
-    q = @(x) 0.5*erfc(x/sqrt(2));
-    a = sqrt(gam/5);
-    ber = 0.75*q(a) + 0.25*q(3*a);
-    plot(ax, snr, ber, 'k-.', 'LineWidth', 1.3, 'DisplayName', 'теория, КАМ-16 (АБГШ)');
+    berTh = berawgn(snr, 'qam', 16);
+    plot(ax, snr, berTh, 'k-.', 'LineWidth', 1.3, 'DisplayName', 'теория КАМ-16 (berawgn)');
 end
 
 % ------------------------------------------------------------------------
 function finish_ber_axes(ax, cfg, ttl)
 %FINISH_BER_AXES  Оформление осей BER (логарифмический масштаб по BER).
-%   Масштаб задаётся ЯВНО: при включённом hold on функции semilogy/loglog
-%   НЕ переключают масштаб уже существующих осей.
     set(ax, 'YScale', 'log', 'XScale', 'linear');
     xlim(ax, [cfg.snrDb(1)-0.5, cfg.snrDb(end)+0.5]);
     ylim(ax, [1e-6 1]);
@@ -1080,7 +1077,17 @@ end
 
 % ------------------------------------------------------------------------
 function save_figure(cfg, h, name)
-%SAVE_FIGURE  Сохранение рисунка в PNG.
+%SAVE_FIGURE  Сохранение рисунка в PNG без встроенной панели инструментов осей.
+    axAll = findall(h, 'Type', 'axes');
+    for i = 1:numel(axAll)
+        try
+            if isprop(axAll(i), 'Toolbar') && ~isempty(axAll(i).Toolbar)
+                axAll(i).Toolbar.Visible = 'off';
+            end
+        catch
+        end
+    end
+    drawnow;
     f = fullfile(cfg.figDir, [name '.png']);
     exportgraphics(h, f, 'Resolution', cfg.figureResolution);
     fprintf('  -> сохранён %s.png\n', name);
@@ -1095,8 +1102,6 @@ end
 % ------------------------------------------------------------------------
 function lab3_debug(cfg)
 %LAB3_DEBUG  Самопроверка модели (вызывается при LAB3_DEBUG=1).
-%   Проверяет: структуру ЦП, корреляцию ЦП и его копии, метрику при точном
-%   положении, согласованность модулятора/демодулятора КАМ-16.
     fid = fopen(fullfile(cfg.outDir, 'Lab3_selfcheck.txt'), 'w', 'n', 'UTF-8');
     frame = lab_frame(cfg);
     d0 = cfg.padLen + 1;
@@ -1105,67 +1110,34 @@ function lab3_debug(cfg)
 
     say('длина кадра: %d отсчётов (%.2f символа)\n', numel(frame), numel(frame)/Nsym);
 
-    % 1) ЦП - точная копия хвоста символа
+    % 1) ЦП - точная копия хвоста символа (и проверка согласованности мощности)
     for s = 1:3
         off = (s-1)*Nsym;
         a = frame(off + (1:Ncp));
         b = frame(off + N + (1:Ncp));
         rho = abs(sum(conj(a).*b)) / sqrt(sum(abs(a).^2)*sum(abs(b).^2));
-        say('символ %d: rho(ЦП, хвост) = %.6f, мощность = %.4f\n', ...
+        say('символ %d: rho(ЦП, хвост) = %.6f, мощность = %.6e\n', ...
             s, rho, mean(abs(frame(off + (1:Nsym))).^2));
     end
 
     % 2) модулятор/демодулятор КАМ-16
-    bt = double(randi([0 1], 4, 1000));
-    bh = qam16_demap(qam16_map(bt));
-    say('КАМ-16: BER(map->demap) = %g (должно быть 0)\n', mean(bt(:) ~= bh(:)));
+    bt = randi([0 1], 4, 1000);
+    syms = qammod(bt, 16, 'InputType', 'bit', 'UnitAveragePower', true);
+    bh = qamdemod(syms, 16, 'OutputType', 'bit', 'UnitAveragePower', true);
+    say('КАМ-16: BER(mod->demod) = %g (должно быть 0)\n', mean(bt(:) ~= bh(:)));
 
     % 3) метрика по ЦП при точном положении и без шума
     rx = lab_channel(cfg, frame, 0, 0, 100);
-    [dHat, metric, ax] = cp_metric(rx, cfg, 1, d0);
-    say('метрика ЦП: dHat = %d (истина %d), M(0) = %.4f (теория 0.25)\n', ...
+    [dHat, metric, ax] = cp_metric(rx, cfg, 1, d0, 'rho');
+    say('метрика ЦП: dHat = %d (истина %d), rho(0) = %.4f\n', ...
         dHat, d0, metric(ax == 0));
     [dHatM, metM] = minn_metric(rx, cfg, d0);
     say('метрика Минна: dHat = %d (истина %d), max M = %.4f\n', ...
         dHatM, d0, max(metM));
 
     % 4) нормировка шума
-    gDb = 10 + 10*log10(cfg.qamBits*numel(cfg.dataIdx)/cfg.Nused);
-    say('Eb/N0 = 10 дБ -> Es/N0 = %.2f дБ, sigma^2 = %.5f\n', ...
-        gDb, (cfg.Nused/N)/(10^(gDb/10)));
+    Ps = mean(abs(qammod(0:15, 16, 'UnitAveragePower', true)).^2) / cfg.qamBits / N;
+    say('Eb/N0 = 10 дБ: Ps = %.6e, N0 = %.6e\n', Ps, Ps / 10);
     fclose(fid);
     fprintf('Самопроверка записана в %s\n', fullfile(cfg.outDir, 'Lab3_selfcheck.txt'));
 end
-
-
-
-
-% ------------------------------------------------------------------------
-function rxShifted = apply_fractional_delay(rx, deltaFrac)
-%APPLY_FRACTIONAL_DELAY  Дробная задержка сигнала через ДПФ.
-    if deltaFrac == 0
-        rxShifted = rx;
-        return;
-    end
-    N = numel(rx);
-    k = [0:ceil(N/2)-1, -floor(N/2):-1].';
-    f = k / N;
-    phaseShift = exp(-1j * 2 * pi * f * deltaFrac);
-    rxShifted = ifft(fft(rx) .* phaseShift);
-end
-
-% ------------------------------------------------------------------------
-function [hChannel, Hfreq] = generate_multipath_channel(Nfft, maxDelay, numTaps)
-%GENERATE_MULTIPATH_CHANNEL  Канал Рэлея с экспоненциальным профилем задержек.
-    if maxDelay < 1; maxDelay = 1; end
-    delays = round(linspace(0, maxDelay, numTaps));
-    pdp = exp(-delays / max(maxDelay / 3, 1));
-    pdp = pdp / sum(pdp);
-    taps = sqrt(pdp/2) .* (randn(1, numTaps) + 1j*randn(1, numTaps));
-    hChannel = zeros(maxDelay + 1, 1);
-    hChannel(delays + 1) = taps;
-    hChannel = hChannel / norm(hChannel);
-    Hfreq = fft(hChannel, Nfft);
-end
-
-
