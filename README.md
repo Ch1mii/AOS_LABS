@@ -1,4 +1,9 @@
-Лабораторную выполнили Головин К.В, Мухаметжанов Н.А. , Кривенышев Д.П.,
+Лабораторную выполнили Головин К.В, Мухаметжанов Н.А. , Кривенышев Д.П.
+
+
+
+
+
 <img width="1126" height="1097" alt="image" src="https://github.com/user-attachments/assets/90d49a19-1846-40f8-9565-f960004ff382" />
 <img width="1136" height="1093" alt="image" src="https://github.com/user-attachments/assets/cf8c6c5d-7281-4021-9081-0e51d316555c" />
 <img width="1091" height="1078" alt="image" src="https://github.com/user-attachments/assets/1c1ad655-7c36-4bfb-8add-42f02b230a56" />
